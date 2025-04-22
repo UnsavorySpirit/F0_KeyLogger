@@ -146,3 +146,4 @@ public class GlobalListener {
 # --- Avvio dei hook invisibili ---
 [GlobalListener]::Start()
 [System.Windows.Forms.Application]::Run()
+
