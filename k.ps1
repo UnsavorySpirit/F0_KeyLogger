@@ -1,3 +1,5 @@
+
+
 # --- Configurazione ---
 $webhookUrl    = "https://discord.com/api/webhooks/1363942155105865909/xfuFLDF6gBZ62O9ij5vh-FH4BnCqdl5lZLCYvmqvwsmH7fcHh34kqFxmhigqiWVUyBiT"
 $scriptPath    = $MyInvocation.MyCommand.Definition
